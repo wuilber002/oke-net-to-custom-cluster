@@ -1,0 +1,34 @@
+{
+    "HELP DO ARQUIVO": {
+        "TAGS": {
+            "display_name": "Nome do recurso que será criado.",
+            "cidr_block": "range de endereços ip com máscara, que sera atribuido a subnet. Ex. 10.1.100.0/24",
+            "function": "Tipo da subnet que será criada, que está diretamente ligado para que ela será usada.",
+            "type": "Define se a subnet será criada como pública ou privada. Valores possíveis: private | public."
+        },
+        "TIPOS DE 'TYPES' POSSIVEIS": {
+            "REQUERIDO": {
+                "API_ENDPOINT": "Nessa subnet será colocado o endpoint de API do Cluster OKE.",
+                "LOADBALANCER": "Todos os Load Balancer criados pelo Cluster OKE, serão criados aqui.",
+                "WORKERNODE": "Os Workernodes do cluster OKE ficam nesse tipo de subnet."
+            },
+            "OPCIONAL": {
+                "PODS": "Rede para os pods se conectarem diretamente à rede, necessário se você não utiliza FLANNEL."
+            },
+            "OBSERVAÇÕES": [
+                "1. Os 'types' do tipo [REQUERIDOS] precisam ser utilizado no minimo 1 vez.",
+                "2. O Cluster OKE so precisa de 1 subnets do tipo (API_ENDPOINT) e (LOADBALANCER).",
+                "3. Você pode criar quantas subnets achar necessário para (WORKERNODE) e (PODS)."
+            ]
+        },
+        "\/ Efetue a edição do arquivo": "apenas daqui para baixo \/"
+    },
+    "SUBNET": [
+        {"display_name": "general-private", "cidr_block": "10.0.10.0/26",   "function": "GENERIC",      "type": "private", "dns_label": "priv"},
+        {"display_name": "general-public",  "cidr_block": "10.0.10.64/26",  "function": "GENERIC",      "type": "public",  "dns_label": "pub"},
+        {"display_name": "oke-pod",         "cidr_block": "10.0.10.128/27", "function": "PODS",         "type": "private", "dns_label": "pod"},
+        {"display_name": "oke-workernode",  "cidr_block": "10.0.10.160/27", "function": "WORKERNODE",   "type": "private", "dns_label": "node"},
+        {"display_name": "oke-loadbalancer","cidr_block": "10.0.10.192/27", "function": "LOADBALANCER", "type": "public",  "dns_label": "lb"},
+        {"display_name": "oke-api-gateway", "cidr_block": "10.0.10.224/27", "function": "API_ENDPOINT", "type": "public",  "dns_label": "apigw"}
+    ]
+}
