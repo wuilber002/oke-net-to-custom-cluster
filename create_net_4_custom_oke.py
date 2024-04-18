@@ -5,9 +5,8 @@
 # route tables e security list necessarias para o funcionamento do Cluster OKE.
 # A VCN alvo, deve estar funcional, com o Service/Nat/Internet Gateway criados.
 #
-# git clone https://github.com/wuilber002/create_network_for_custom_oke.git && cd create-network-for-custom-oke
-# python create_network_for_custom_oke.py --vcn-ocid <ocid1.vcn.oc1...>
-#
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# Documentacao Oficial Oracle sobre a construcao da rede para o cluster OKE.
 # Network Resource Configuration for Cluster Creation and Deployment:
 # https://docs.oracle.com/en-us/iaas/Content/ContEng/Concepts/contengnetworkconfig.htm#subnetconfig
 #
@@ -26,60 +25,85 @@ from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
-def save_resource_list(OUTPUT_FILE, DICT_TO_SAVE):
+def save_resource_list(output_file, dict_to_save):
     """
-    Grava i OCID recebio em uma lista que pode ser usada para fazer o processo
+    Grava o OCID recebio em uma lista que pode ser usada para fazer o processo
     de delecao dos objetos criados.
     """
-    with open(OUTPUT_FILE, "w") as OUTPUT:
-        json.dump(obj=DICT_TO_SAVE, fp=OUTPUT, indent=2)
+    with open(output_file, "w") as OUTPUT:
+        json.dump(obj=dict_to_save, fp=OUTPUT, indent=2)
         OUTPUT.close
 
 # ------------------------------------------------------------------------------
-def deleteResourcesFromList(core_client, RESOURCE_LIST_FILE):
+def deleteResourcesFromList(oci_config, resource_list_file):
     """
+    Executa a exclusao de recursos presentes no arquivo json criado 
+    com a lista de recursos criados no OCI em uma execusao anterior
+    desse script.
     """
-    # Opening JSON file
-    with open(RESOURCE_LIST_FILE) as json_file:
+    # Abre o arquivo JSON
+    with open(resource_list_file) as json_file:
         data = json.load(json_file)
-    
     json_file.close()
-    
-    # deleta as sub-redes primeiro:
-    for subnet_ocid in data['subnet']:
-        print(subnet_ocid, end='')
-        delete_subnet_response = core_client.delete_subnet(
-            subnet_id=subnet_ocid,
-        )
-        if delete_subnet_response.data == None:
-            print(' [DELETED]')
-        else:
-            print(' [ERRO]')
-            print(delete_subnet_response.data)
 
-    # Depois das sub-redes, pode deletar qualquer um, entre SecList ou Route Table:
-    for route_table_ocid in data['route_table']:
-        print(route_table_ocid, end='')
-        delete_route_table_response = core_client.delete_route_table(
-            rt_id=route_table_ocid,
-        )
-        if delete_route_table_response.data == None:
-            print(' [DELETED]')
-        else:
-            print(' [ERRO]')
-            print(delete_route_table_response.data)
 
-    # Depois das sub-redes, pode deletar qualquer um, entre SecList ou Route Table:
-    for security_list_ocid in data['security_list']:
-        print(security_list_ocid, end='')
-        delete_security_list_response = core_client.delete_security_list(
-            security_list_id=security_list_ocid,
-        )
-        if delete_security_list_response.data == None:
-            print(' [DELETED]')
-        else:
-            print(' [ERRO]')
-            print(delete_security_list_response.data)
+    core_client=None
+
+
+    # Deleta as sub-redes primeiro e depois as SecList ou Route Table em qualquer ordem:
+    for resource_ocid in (data['subnet'] + (data['route_table'] + data['security_list'])):
+        # ---------------------------------------------------------------------
+        # Cria o client de conexao com o OCI, para a regiao do recurso que sera
+        # deletado. O client sera criado, apenas 1 vez.
+        if core_client == None:
+            oci_config['region'] = ExtractRegionFromOCID(resource_ocid)
+            if args.config != None:
+                core_client = oci.core.VirtualNetworkClient(config=oci_config, retry_strategy=CUSTOM_RETRY_STRATEGY)
+                print(' >>> Tipo de autenticação: Config file <<<\n')
+            else:
+                core_client = oci.core.VirtualNetworkClient(config=oci_config, signer=signer, retry_strategy=CUSTOM_RETRY_STRATEGY)
+                print(' >>> Tipo de autenticação: Instance principal <<<\n')
+
+        print(resource_ocid, end='')
+        try:
+            if re.match('^(ocid1\.subnet\.oc1\..*)', resource_ocid):
+                delete_resource_response = core_client.delete_subnet(
+                    subnet_id=resource_ocid,
+                )   
+            elif re.match('^(ocid1\.routetable\.oc1\..*)', resource_ocid):
+                delete_resource_response = core_client.delete_route_table(
+                    rt_id=resource_ocid
+                )
+            elif re.match('^(ocid1\.securitylist\.oc1\..*)', resource_ocid):
+                delete_resource_response = core_client.delete_security_list(
+                    security_list_id=resource_ocid
+                )
+            if delete_resource_response.data == None:
+                print(' [%sDELETED%s]' % (color['green'], color['clean']))
+            else:
+                print('\n`-> [%sWARNING%s] %s' % (
+                    color['yellow'],
+                    color['clean'],
+                    delete_resource_response.data
+                ))
+
+        except Exception as exc_error:
+            print('\n`-> [%sERRO%s] (%s) %s' % (
+                color['red'],
+                color['clean'],
+                exc_error.status,
+                exc_error.message
+            ))
+
+# -----------------------------------------------------------------------------
+#
+def ExtractRegionFromOCID(ocid):
+    """
+    Returna a regiao a qual o OCID faz referencia.
+    """
+    return(((
+        re.compile('ocid1\.[a-z]{1,}\.oc1.(.*)\..*([a-z 0-9]{60})+')
+    ).search(ocid)).group(1))
 
 # -----------------------------------------------------------------------------
 #
@@ -102,6 +126,7 @@ perfix_names={
 # subnets e suas route_tables e security_lists.
 # >>> Todos os valores serao populados durante a execusao do script <<<
 vcn_data = {
+    "region": None,
     "vcn_ocid": None,
     "cidr_block": None,
     "internet_gateway_ocid": None,
@@ -220,24 +245,17 @@ CUSTOM_RETRY_STRATEGY = oci.retry.RetryStrategyBuilder(
 ).get_retry_strategy()
 
 # -----------------------------------------------------------------------------
-# Inicializa o client de rede para interacao com o OCI:
-if args.config != None:
-    core_client = oci.core.VirtualNetworkClient(config=oci_config, retry_strategy=CUSTOM_RETRY_STRATEGY)
-    print('\n  >>> Authentication by Config file <<<\n')
-else:
-    core_client = oci.core.VirtualNetworkClient(config=oci_config, signer=signer, retry_strategy=CUSTOM_RETRY_STRATEGY)
-    print('\n  >>> Authentication by Instance principal <<<\n')
-
-# -----------------------------------------------------------------------------
 #
 if args.rollback != None:
     print("\n >>> Apagando os recursos da lista de rollback...\n")
-    deleteResourcesFromList(core_client, args.rollback)
+    deleteResourcesFromList(oci_config, args.rollback)
     sys.exit(0)
 
 # -----------------------------------------------------------------------------
 # Identifica qual sera o compartment utilizado para pesquisa.
 vcn_data['vcn_ocid'] = args.vcn_ocid
+vcn_data['region'] = ExtractRegionFromOCID(args.vcn_ocid)
+
 if args.vcn_ocid == None:
     print("\n!!! Voce precisa informar o %sOCID da VCN%s que sera usada para criar !!!" % (color['red'], color['clean']))
     print("!!!           as subnets, route tables e security lists           !!!")
@@ -249,6 +267,21 @@ else:
         print(' [%sERRO%s] O ocid especificado parece nao ter um formato valido.' % (color['red'],color['clean']))
         sys.exit(2)
 
+# ------------------------------------------------------------------------------
+# Altera a configura de conexao com OCI para utilizar a reginao do OCID da VCN
+# especificada por parametro
+oci_config['region'] = vcn_data['region']
+
+# -----------------------------------------------------------------------------
+# Inicializa o client de rede para interacao com o OCI:
+if args.config != None:
+    core_client = oci.core.VirtualNetworkClient(config=oci_config, retry_strategy=CUSTOM_RETRY_STRATEGY)
+    print('\n  >>> Tipo de autenticação: Config file <<<\n')
+else:
+    core_client = oci.core.VirtualNetworkClient(config=oci_config, signer=signer, retry_strategy=CUSTOM_RETRY_STRATEGY)
+    print('\n  >>> Tipo de autenticação: Instance principal <<<\n')
+
+# Verifica o arquivo de parametros:
 if args.input_file == "":
     print(' [%sERRO%s] Voce precisa informar um arquivo valido com as configuracoes de subnet para o OKE.' % (color['red'], color['clean']))
     sys.exit(1)
@@ -275,7 +308,17 @@ SECURITY_LISTS=dict()
 # ------------------------------------------------------------------------------
 # Coleta as informacoes da VCN
 print(" * Coletando informacoes da VCN...")
-VCN_RESPONSE = core_client.get_vcn(vcn_id=vcn_data["vcn_ocid"])
+print(" | |-> Region: %s" % (oci_config['region']))
+try:
+    VCN_RESPONSE = core_client.get_vcn(vcn_id=vcn_data["vcn_ocid"])
+except Exception as exc_error:
+    print(' `-> [%sERRO%s] Get VCN info: (%s) %s' % (
+        color['red'],
+        color['clean'],
+        exc_error.status,
+        exc_error.message
+    ))
+    sys.exit(2)
 vcn_data["vcn_compartment_ocid"]=VCN_RESPONSE.data.compartment_id
 vcn_data["cidr_block"] = VCN_RESPONSE.data.cidr_block
 print(" | |-> CIDR Block: %s" % (vcn_data["cidr_block"]))
